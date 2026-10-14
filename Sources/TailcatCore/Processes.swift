@@ -6,8 +6,10 @@ public struct Command {
     public let arguments: [String]
     public let timeout: TimeInterval
     public let environment: [String: String]
-    public init(_ executable: URL, _ arguments: [String], timeout: TimeInterval = 20, environment: [String: String] = [:]) {
+    public let terminalOutput: Bool
+    public init(_ executable: URL, _ arguments: [String], timeout: TimeInterval = 20, environment: [String: String] = [:], terminalOutput: Bool = false) {
         self.executable = executable; self.arguments = arguments; self.timeout = timeout; self.environment = environment
+        self.terminalOutput = terminalOutput
     }
 }
 
@@ -53,22 +55,46 @@ public struct CommandResult {
         env.merge(command.environment) { _, new in new }
         process.environment = env
         process.standardInput = FileHandle.nullDevice
-        let out = Pipe(), err = Pipe(), group = DispatchGroup()
-        process.standardOutput = out; process.standardError = err
-        group.enter(); group.enter()
+        let group = DispatchGroup()
+        var readers: [FileHandle] = []
+        var terminalSlave: FileHandle?
+        if command.terminalOutput {
+            // ADB hides live transfer progress unless stderr is a smart terminal.
+            // Share the terminal for stdout/stderr so phase markers are line-buffered too.
+            var master: Int32 = -1, slave: Int32 = -1
+            var size = winsize(ws_row: 24, ws_col: 160, ws_xpixel: 0, ws_ypixel: 0)
+            guard openpty(&master, &slave, nil, nil, &size) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            _ = fcntl(master, F_SETFD, FD_CLOEXEC); _ = fcntl(slave, F_SETFD, FD_CLOEXEC)
+            let reader = FileHandle(fileDescriptor: master, closeOnDealloc: true)
+            let writer = FileHandle(fileDescriptor: slave, closeOnDealloc: true)
+            readers = [reader]; terminalSlave = writer
+            process.standardOutput = writer; process.standardError = writer
+        } else {
+            let out = Pipe(), err = Pipe()
+            process.standardOutput = out; process.standardError = err
+            readers = [out.fileHandleForReading, err.fileHandleForReading]
+        }
+        for _ in readers { group.enter() }
         process.terminationHandler = { process in
             let status = process.terminationStatus
             group.notify(queue: .main) { onExit(status) }
         }
         try process.run()
-        // Drain both pipes concurrently, including trailing output before delivering exit.
-        for pipe in [out, err] {
+        try? terminalSlave?.close()
+        // Drain outputs concurrently, including trailing output before delivering exit.
+        for handle in readers {
             DispatchQueue.global(qos: .utility).async {
-                let handle = pipe.fileHandleForReading
                 var bytes = Data()
+                var buffer = [UInt8](repeating: 0, count: 8192)
                 while true {
-                    let data = handle.availableData
-                    if data.isEmpty { break }
+                    // Foundation's read(upToCount:) can wait to fill its buffer, hiding live
+                    // progress. One POSIX read returns as soon as any bytes are available.
+                    let count = buffer.withUnsafeMutableBytes { Darwin.read(handle.fileDescriptor, $0.baseAddress, $0.count) }
+                    if count < 0 && errno == EINTR { continue }
+                    if count <= 0 { break } // A closed terminal can report EIO instead of EOF.
+                    let data = Data(buffer.prefix(count))
                     bytes.append(data)
                     // UTF-8 code points may span reads. Preserve incomplete suffixes.
                     if let value = String(data: bytes, encoding: .utf8) {

@@ -188,7 +188,7 @@ struct ManagerView: View {
         panel.allowedContentTypes = [UTType(filenameExtension: "apk") ?? .data]
         panel.message = "选择要安装到当前设备的 APK"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try manager.beginADBTask(id, title: "安装 \(url.lastPathComponent)", arguments: ["install", "-r", url.path], timeout: 600) }
+        do { try manager.beginAPKInstall(id, file: url) }
         catch { self.error = error.localizedDescription }
     }
     private func chooseUpload(_ profile: DeviceProfile) {
@@ -396,27 +396,65 @@ private struct TaskHistoryView: View {
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(Array(manager.tasks.suffix(20).reversed())) { task in
-                        DisclosureGroup {
-                            Text(task.output.isEmpty ? "等待命令输出…" : task.output)
-                                .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(task.title).lineLimit(1)
-                                    Text("\(task.deviceName) · \(task.serial)").font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            DisclosureGroup {
+                                Text(task.output.isEmpty ? (task.installProgress?.stage.label ?? "等待命令输出…") : task.output)
+                                    .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(task.title).lineLimit(1)
+                                        Text("\(task.deviceName) · \(task.serial)").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(task.state.label).font(.caption).foregroundStyle(task.state == .failed ? .red : .secondary)
+                                    if task.state == .running {
+                                        Button("取消") { manager.cancelTask(task.id) }.controlSize(.small)
+                                    }
                                 }
-                                Spacer()
-                                Text(task.state.label).font(.caption).foregroundStyle(task.state == .failed ? .red : .secondary)
-                                if task.state == .running {
-                                    Button("取消") { manager.cancelTask(task.id) }.controlSize(.small)
-                                }
+                            }
+                            if let progress = task.installProgress {
+                                APKInstallProgressView(task: task, progress: progress)
                             }
                         }
                     }
                 }.padding(.trailing, 8)
             }.frame(maxHeight: 160)
         }.padding(.horizontal, 24).padding(.vertical, 14)
+    }
+}
+
+private struct APKInstallProgressView: View {
+    let task: DeviceTask
+    let progress: APKInstallProgress
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(task.state == .running || task.state == .succeeded ? progress.stage.label : task.state.label)
+                Spacer()
+                if let fraction = progress.fraction, progress.stage == .uploading {
+                    Text("\(Int((fraction * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                Text(ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file))
+                    .foregroundStyle(.secondary)
+                if task.state == .running {
+                    TimelineView(.periodic(from: task.date, by: 1)) { context in
+                        let seconds = max(0, Int(context.date.timeIntervalSince(task.date)))
+                        Text("已用时 \(seconds / 60) 分 \(seconds % 60) 秒")
+                            .monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+            }.font(.caption)
+            if task.state == .running {
+                if let fraction = progress.fraction, progress.stage == .uploading {
+                    ProgressView(value: fraction).accessibilityLabel("APK 上传进度")
+                } else {
+                    ProgressView().controlSize(.small).accessibilityLabel(progress.stage.label)
+                }
+            }
+        }.padding(.leading, 20)
     }
 }
 

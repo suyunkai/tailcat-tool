@@ -28,6 +28,32 @@ import TailcatCore
         try expectEqual(result.output, literal)
     }
 
+    func testTerminalOutputArrivesBeforeExitAndCancellationClosesTerminal() async throws {
+        let runner = ProcessRunner()
+        var liveOutput = ""
+        let command = Command(URL(fileURLWithPath: "/bin/sh"),
+                              ["-c", "test -t 1 && test -t 2 || exit 7; printf 'READY\\n'; sleep 0.3; printf '\\r[ 42%%] progress\\r\\nFINAL\\n'"],
+                              timeout: 5, terminalOutput: true)
+        let job = Task { try await runner.run(command) { liveOutput += $0 } }
+        for _ in 0..<20 {
+            if liveOutput.contains("READY") { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try expectTrue(liveOutput.contains("READY"))
+        try expectFalse(liveOutput.contains("FINAL"))
+        let result = try await job.value
+        try expectEqual(result.exitCode, 0)
+        try expectTrue(result.output.contains("[ 42%]"))
+        try expectTrue(result.output.contains("FINAL"))
+        let timedOut = try await runner.run(Command(URL(fileURLWithPath: "/bin/sleep"), ["30"], timeout: 0.1, terminalOutput: true))
+        try expectTrue(timedOut.timedOut)
+        let cancellable = Task { try await runner.run(Command(URL(fileURLWithPath: "/bin/sleep"), ["30"], terminalOutput: true)) }
+        try await Task.sleep(nanoseconds: 30_000_000)
+        cancellable.cancel()
+        let cancelled = try await cancellable.value
+        try expectTrue(cancelled.cancelled)
+    }
+
     func testNativeTailcatListeners() async throws {
         guard let path = ToolLocator.find("tailcat") else { throw ManagerError.message("Native check requires installed Tailcat") }
         let runner = ProcessRunner()

@@ -33,6 +33,14 @@ import TailcatCore
             return CommandResult(output: "E245（示例）\nantora-demo\n11\nDEMO-ONLY\nuid=0(root) gid=0(root)\n")
         }
         if args.first == "ping" { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
+        if args.contains("install") {
+            for chunk in ["Performing Push Install\n", "\r[ 25%] example.apk: 25%", "\r[ 60%] example.apk: 60%",
+                          "\r[100%] example.apk: 100%\rexample.apk: 1 file pushed, 0 skipped.\n"] {
+                onOutput(chunk)
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+            return CommandResult(output: "Success\n（演示：未安装真实 APK）\n")
+        }
         onOutput("示例任务正在执行，目标 \(args.dropFirst().first ?? "")\n")
         try await Task.sleep(nanoseconds: 1_500_000_000)
         return CommandResult(output: "示例任务完成，未执行真实设备命令。\n")

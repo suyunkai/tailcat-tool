@@ -98,6 +98,7 @@ public struct DeviceTask: Identifiable {
     public let date = Date()
     public var state: TaskState = .running
     public var output = ""
+    public var installProgress: APKInstallProgress?
 }
 
 public enum ManagerError: LocalizedError {

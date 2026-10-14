@@ -1,8 +1,9 @@
 import Foundation
 import TailcatCore
 
-private struct CheckFailure: Error, CustomStringConvertible {
+private struct CheckFailure: Error, CustomStringConvertible, LocalizedError {
     let description: String
+    var errorDescription: String? { description }
 }
 
 func expectEqual<T: Equatable>(_ lhs: T, _ rhs: T, file: String = #filePath, line: Int = #line) throws {
@@ -21,7 +22,12 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
         let session = SessionTests(), persistence = PersistenceTests(), process = ProcessTests()
         let integration = ExternalAndInstallerTests()
         let reachability = ReachabilityTests()
+        let apkProgress = APKInstallProgressTests()
         var checks: [(String, @MainActor () async throws -> Void)] = [
+            ("APK terminal progress / split lines / upload versus install", { try apkProgress.testSplitTerminalProgressAndInstallationPhase() }),
+            ("APK live progress / fixed device / duplicate prevention", { try await session.testAPKInstallShowsLivePhasesAndKeepsFixedTarget() }),
+            ("APK failure / timeout / cancellation do not complete", { try await session.testAPKInstallFailureAndCancellationNeverReportCompletion() }),
+            ("terminal live output / trailing output / timeout / cancellation", { try await process.testTerminalOutputArrivesBeforeExitAndCancellationClosesTerminal() }),
             ("credential authorization cache / silent observation / update", { try reachability.testCredentialsReuseAuthorizationAndUpdateCache() }),
             ("batch ping / bounded concurrency / latency / redaction / no ADB", { try await reachability.testAllDevicesBoundedResultsAndNoADBCommands() }),
             ("batch cancellation / queue cleanup / restart", { try await reachability.testCancellationStopsActiveTestsAndQueueBeforeRestart() }),

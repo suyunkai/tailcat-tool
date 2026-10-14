@@ -35,13 +35,17 @@ private final class SpyCredentialStore: CredentialStore {
 
 @MainActor private final class FakeRunner: CommandExecuting {
     var calls: [[String]] = []
+    var commands: [Command] = []
     var unauthorized: Set<String> = []
     var operationDelay: UInt64 = 0
+    var operationChunks = ["Success\n"]
+    var operationResult = CommandResult(output: "Success\n")
+    var didEmit: ((Command) -> Void)?
     var onDisconnect: ((String) -> Void)?
     func start(_ command: Command, onOutput: @escaping (String) -> Void,
                onExit: @escaping (Int32) -> Void) throws -> any RunningProcess { FakeProcess(1) }
     func run(_ command: Command, onOutput: @escaping (String) -> Void) async throws -> CommandResult {
-        let args = command.arguments; calls.append(args)
+        let args = command.arguments; calls.append(args); commands.append(command)
         if args.first == "disconnect", args.count > 1 { onDisconnect?(args[1]) }
         if args.first == "parse" || args.first == "connect" || args.first == "disconnect" { return CommandResult() }
         if args.contains("get-state") {
@@ -51,8 +55,8 @@ private final class SpyCredentialStore: CredentialStore {
             return CommandResult(output: "TestModel\nproduct\n11\nSERIAL-TEST\nuid=2000(shell)\n")
         }
         if operationDelay > 0 { try await Task.sleep(nanoseconds: operationDelay) }
-        onOutput("Success\n")
-        return CommandResult(output: "Success\n")
+        for chunk in operationChunks { onOutput(chunk); didEmit?(command) }
+        return operationResult
     }
 }
 
@@ -107,6 +111,77 @@ private final class SpyCredentialStore: CredentialStore {
         try expectEqual(manager.session(profiles[0].id).state, .unauthorized)
         try expectTrue(transport.handles[5556]!.isRunning)
         try expectThrows(try manager.beginADBTask(profiles[0].id, title: "install", arguments: ["install", "-r", "x.apk"]))
+        await manager.disconnectAll()
+    }
+    func testAPKInstallShowsLivePhasesAndKeepsFixedTarget() async throws {
+        let (manager, runner, _, profiles) = try environment()
+        await manager.connect(profiles[0].id)?.value
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("an APK ' with spaces.apk")
+        try Data(repeating: 0, count: 1024).write(to: file)
+        let empty = directory.appendingPathComponent("empty.apk")
+        try Data().write(to: empty)
+        try expectThrows(try manager.beginAPKInstall(profiles[0].id, file: empty))
+        try expectTrue(manager.tasks.isEmpty)
+        runner.operationDelay = 100_000_000
+        runner.operationChunks = ["Performing Push Install\n", "\r[ 42%] /data/local/tmp/example.apk: 42%",
+                                  "\r/data/local/tmp/example.apk: 1 file pushed, 0 skipped.\n", "Success\n"]
+        var observed: [APKInstallProgress] = []
+        runner.didEmit = { command in
+            if command.arguments.contains("127.0.0.1:5556"), let progress = manager.tasks.first?.installProgress {
+                observed.append(progress)
+            }
+        }
+        let task = try manager.beginAPKInstall(profiles[0].id, file: file)
+        try expectEqual(manager.tasks.first?.installProgress?.stage, .preparing)
+        try expectThrows(try manager.beginAPKInstall(profiles[0].id, file: file))
+        await manager.connect(profiles[1].id)?.value
+        let secondTask = try manager.beginAPKInstall(profiles[1].id, file: file)
+        await manager.waitForTask(task)
+        await manager.waitForTask(secondTask)
+        guard let command = runner.commands.first(where: { $0.arguments.contains("install") }) else {
+            throw ManagerError.message("missing install")
+        }
+        try expectEqual(command.arguments, ["-s", "127.0.0.1:5556", "install", "--no-streaming", "-r", file.path])
+        try expectTrue(command.terminalOutput)
+        try expectEqual(command.environment["TERM"], "xterm")
+        try expectTrue(runner.calls.contains(["-s", "127.0.0.1:5557", "install", "--no-streaming", "-r", file.path]))
+        try expectTrue(observed.contains { $0.stage == .uploading && $0.fraction == 0.42 })
+        try expectTrue(observed.contains { $0.stage == .installing && $0.fraction == nil })
+        try expectFalse(observed.contains { $0.stage == .completed })
+        try expectEqual(manager.tasks.first?.installProgress?.totalBytes, 1024)
+        try expectEqual(manager.tasks.first?.installProgress?.stage, .completed)
+        try expectEqual(manager.tasks.first?.state, .succeeded)
+        try expectEqual(manager.tasks.last?.state, .succeeded)
+        await manager.disconnectAll()
+    }
+    func testAPKInstallFailureAndCancellationNeverReportCompletion() async throws {
+        let (manager, runner, _, profiles) = try environment()
+        await manager.connect(profiles[0].id)?.value
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).apk")
+        try Data([0]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        runner.operationChunks = ["\r[100%] example.apk: 100%\r", "example.apk: 1 file pushed, 0 skipped.\n"]
+        runner.operationResult = CommandResult(exitCode: 1, output: "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]\n")
+        let failed = try manager.beginAPKInstall(profiles[0].id, file: file)
+        await manager.waitForTask(failed)
+        try expectEqual(manager.tasks.first?.state, .failed)
+        try expectEqual(manager.tasks.first?.installProgress?.stage, .installing)
+        try expectNil(manager.tasks.first?.installProgress?.fraction)
+        runner.operationDelay = 2_000_000_000
+        let cancelled = try manager.beginAPKInstall(profiles[0].id, file: file)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        manager.cancelTask(cancelled); await manager.waitForTask(cancelled)
+        try expectEqual(manager.tasks.last?.state, .cancelled)
+        try expectFalse(manager.tasks.last?.installProgress?.stage == .completed)
+        runner.operationDelay = 0
+        runner.operationResult = CommandResult(timedOut: true)
+        let timedOut = try manager.beginAPKInstall(profiles[0].id, file: file)
+        await manager.waitForTask(timedOut)
+        try expectEqual(manager.tasks.last?.state, .failed)
+        try expectFalse(manager.tasks.last?.installProgress?.stage == .completed)
         await manager.disconnectAll()
     }
     func testDisconnectCancelsPendingConnectWithoutLeakingTunnel() async throws {

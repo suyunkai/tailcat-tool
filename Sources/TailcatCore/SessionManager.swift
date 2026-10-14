@@ -539,6 +539,24 @@ import Combine
                          command: Command(snapshot.adb, ["-s", snapshot.serial] + arguments, timeout: timeout))
     }
 
+    @discardableResult public func beginAPKInstall(_ id: UUID, file: URL) throws -> UUID {
+        let target = try operationTarget(id)
+        guard !tasks.contains(where: { $0.deviceID == id && $0.state == .running && $0.installProgress != nil }) else {
+            throw ManagerError.message("这台设备已有 APK 正在安装，请等待完成或取消后再试")
+        }
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard file.isFileURL, file.pathExtension.lowercased() == "apk", values.isRegularFile == true,
+              let size = values.fileSize, size > 0, FileManager.default.isReadableFile(atPath: file.path) else {
+            throw ManagerError.message("请选择可读取的非空 APK 文件")
+        }
+        // Let ADB own upload, replacement, and temporary-file cleanup. Its non-streaming
+        // mode exposes real upload progress; a terminal prevents buffering/suppression.
+        let command = Command(target.adb, ["-s", target.serial, "install", "--no-streaming", "-r", file.path],
+                              timeout: 600, environment: ["TERM": "xterm"], terminalOutput: true)
+        return startTask(id, title: "安装 \(file.lastPathComponent)", target: target,
+                         command: command, installProgress: APKInstallProgress(totalBytes: Int64(size)))
+    }
+
     @discardableResult public func beginScreen(_ id: UUID) throws -> UUID {
         let snapshot = try operationTarget(id)
         let executable = try ToolLocator.executable(tools.scrcpy, name: "scrcpy")
@@ -636,11 +654,14 @@ import Combine
         informationJobs[id] = job; return job
     }
 
-    private func startTask(_ id: UUID, title: String, target: OperationTarget, command: Command) -> UUID {
+    private func startTask(_ id: UUID, title: String, target: OperationTarget, command: Command,
+                           installProgress: APKInstallProgress? = nil) -> UUID {
         let serial = target.serial
         let taskID = UUID()
         let name = allProfiles.first(where: { $0.id == id })?.name ?? "设备"
-        tasks.append(DeviceTask(id: taskID, deviceID: id, deviceName: name, serial: serial, title: title))
+        var task = DeviceTask(id: taskID, deviceID: id, deviceName: name, serial: serial, title: title)
+        task.installProgress = installProgress
+        tasks.append(task)
         // Trim completed history only; active tasks always remain visible and cancellable.
         while tasks.count > 100, let index = tasks.firstIndex(where: { $0.state != .running }) { tasks.remove(at: index) }
         let job = Task { [weak self] in
@@ -648,21 +669,34 @@ import Combine
             do {
                 try await self.validateTarget(id, target)
                 let redactor = OutputRedactor()
+                let parser = installProgress.map { APKInstallOutputParser(totalBytes: $0.totalBytes) }
                 let result = try await self.runner.run(command, onOutput: { [weak self] chunk in
-                    let safe = redactor.append(chunk)
+                    if let parser {
+                        let progress = parser.append(chunk)
+                        self?.updateTask(taskID) { $0.installProgress = progress }
+                    }
+                    let redacted = redactor.append(chunk)
+                    let safe = parser == nil ? redacted : APKInstallOutputParser.plainText(redacted)
                     if !safe.isEmpty { self?.updateTask(taskID) { $0.output = String(($0.output + safe).suffix(32768)) } }
                 })
                 try Task.checkCancellation()
                 guard self.targetIsCurrent(id, target) else { throw CancellationError() }
                 try result.requireSuccess()
-                self.updateTask(taskID) { $0.state = .succeeded; $0.output = String(Credentials.redact(result.output).suffix(32768)) }
+                self.updateTask(taskID) {
+                    $0.state = .succeeded
+                    $0.output = String(Credentials.redact(parser == nil ? result.output : APKInstallOutputParser.plainText(result.output)).suffix(32768))
+                    if $0.installProgress != nil { $0.installProgress?.stage = .completed; $0.installProgress?.fraction = 1 }
+                }
                 self.log(id, "\(title)已完成 · \(serial)")
             } catch is CancellationError {
                 self.updateTask(taskID) { $0.state = .cancelled }
             } catch {
                 if Task.isCancelled { self.updateTask(taskID) { $0.state = .cancelled } }
                 else {
-                    self.updateTask(taskID) { $0.state = .failed; $0.output = Credentials.redact(error.localizedDescription) }
+                    self.updateTask(taskID) {
+                        $0.state = .failed
+                        $0.output = Credentials.redact(installProgress == nil ? error.localizedDescription : APKInstallOutputParser.plainText(error.localizedDescription))
+                    }
                     self.log(id, "\(title)失败：\(Credentials.redact(error.localizedDescription))")
                 }
             }
