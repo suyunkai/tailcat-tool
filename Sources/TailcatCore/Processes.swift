@@ -205,7 +205,9 @@ public enum ForwardOutput {
             Self.reservedPorts.insert(candidate)
             let startup = Startup()
             let redactor = OutputRedactor(address: address)
-            let command = Command(executable, ["forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
+            // A saved client-default would be shared by every process, causing
+            // concurrent sessions to compete for the same DERP identity.
+            let command = Command(executable, ["--key=new", "forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
             let handle: any RunningProcess
             do {
                 let process = try runner.start(command, onOutput: { chunk in

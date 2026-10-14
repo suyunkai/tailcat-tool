@@ -32,7 +32,7 @@ import TailcatCore
         if args.contains(where: { $0.contains("getprop ro.product.model") }) {
             return CommandResult(output: "E245（示例）\nantora-demo\n11\nDEMO-ONLY\nuid=0(root) gid=0(root)\n")
         }
-        if args.first == "ping" { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
+        if args.starts(with: ["--key=new", "ping"]) { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
         onOutput("示例任务正在执行，目标 \(args.dropFirst().first ?? "")\n")
         try await Task.sleep(nanoseconds: 1_500_000_000)
         return CommandResult(output: "示例任务完成，未执行真实设备命令。\n")

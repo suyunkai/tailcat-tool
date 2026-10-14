@@ -53,6 +53,7 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
         ]
         if CommandLine.arguments.contains("--native-tailcat") {
             checks.append(("installed Tailcat / two listeners / selective cleanup", { try await process.testNativeTailcatListeners() }))
+            checks.append(("installed Tailcat / fresh identity per process", { try await process.testNativeEphemeralIdentitiesDifferBetweenProcesses() }))
         }
         if CommandLine.arguments.contains("--keychain") {
             checks.append(("isolated Keychain create / read / update / delete", { try persistence.testIsolatedKeychainRoundTrip() }))

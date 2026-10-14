@@ -1,6 +1,19 @@
 import Foundation
 import TailcatCore
 
+@MainActor private final class RecordingRunner: CommandExecuting {
+    private let runner = ProcessRunner()
+    var starts: [Command] = []
+    func start(_ command: Command, onOutput: @escaping (String) -> Void,
+               onExit: @escaping (Int32) -> Void) throws -> any RunningProcess {
+        starts.append(command)
+        return try runner.start(command, onOutput: onOutput, onExit: onExit)
+    }
+    func run(_ command: Command, onOutput: @escaping (String) -> Void) async throws -> CommandResult {
+        try await runner.run(command, onOutput: onOutput)
+    }
+}
+
 @MainActor final class ProcessTests {
     func testBothPipesDrainAndTrailingOutputIsPreserved() async throws {
         let runner = ProcessRunner()
@@ -30,7 +43,7 @@ import TailcatCore
 
     func testNativeTailcatListeners() async throws {
         guard let path = ToolLocator.find("tailcat") else { throw ManagerError.message("Native check requires installed Tailcat") }
-        let runner = ProcessRunner()
+        let runner = RecordingRunner()
         let transport = TailcatTransport(executable: URL(fileURLWithPath: path), runner: runner)
         // Public documentation example: only bind local listeners, never dial a remote port.
         let address = "tcomFwWCCcjS5nKNqAod034nWoJZW0LZqDhhC8U_dKdnDRYQ8uNGFpGQEu"
@@ -38,6 +51,9 @@ import TailcatCore
         do {
             let second = try await transport.open(address: address, preferredPort: nil, remotePort: 5555, onLog: { _ in }, onExit: { _ in })
             do {
+                // Occupied OS ports may require extra bind attempts.
+                try expectTrue(runner.starts.count >= 2)
+                try expectTrue(runner.starts.allSatisfy { $0.arguments.starts(with: ["--key=new", "forward", "--bind=127.0.0.1"]) })
                 try expectFalse(first.port == second.port)
                 try expectTrue(first.handle.isRunning && second.handle.isRunning)
                 await first.handle.stop()
@@ -48,5 +64,17 @@ import TailcatCore
             } catch { await second.handle.stop(); throw error }
         } catch { await first.handle.stop(); throw error }
         await first.handle.stop()
+    }
+
+    func testNativeEphemeralIdentitiesDifferBetweenProcesses() async throws {
+        guard let path = ToolLocator.find("tailcat") else { throw ManagerError.message("Native check requires installed Tailcat") }
+        let runner = ProcessRunner()
+        let command = Command(URL(fileURLWithPath: path), ["--key=new", "printpub"])
+        let first = try await runner.run(command)
+        let second = try await runner.run(command)
+        try first.requireSuccess(); try second.requireSuccess()
+        try expectTrue(first.output.hasPrefix("nodekey:"))
+        try expectTrue(second.output.hasPrefix("nodekey:"))
+        try expectFalse(first.output == second.output)
     }
 }

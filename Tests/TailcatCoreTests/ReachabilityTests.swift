@@ -74,7 +74,7 @@ private final class AuthorizationProbeStore: CredentialStore {
         while checker.isRunning { try await Task.sleep(nanoseconds: 10_000_000) }
         try expectEqual(runner.maximumActive, 3)
         try expectEqual(runner.calls.count, 6)
-        try expectTrue(runner.calls.allSatisfy { $0.arguments.first == "ping" && $0.arguments[1] == "--timeout=5s" && $0.timeout == 8 })
+        try expectTrue(runner.calls.allSatisfy { $0.arguments.starts(with: ["--key=new", "ping", "--timeout=5s"]) && $0.arguments.count == 4 && $0.timeout == 8 })
         try expectEqual(checker.results.map(\.id), profiles.map(\.id))
         try expectEqual(checker.results.map(\.state), [.reachable, .reachable, .unreachable, .unreachable, .failed, .failed, .reachable])
         try expectEqual(checker.results[0].latency, "12.3ms")

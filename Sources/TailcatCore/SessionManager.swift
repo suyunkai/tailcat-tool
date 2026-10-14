@@ -520,7 +520,7 @@ import Combine
             do {
                 guard let address = try self.address(for: id) else { return }
                 let executable = try ToolLocator.executable(self.tools.tailcat, name: "Tailcat")
-                let result = try await self.runner.run(Command(executable, ["ping", "--timeout=3s", address], timeout: 5), onOutput: { _ in })
+                let result = try await self.runner.run(Command(executable, ["--key=new", "ping", "--timeout=3s", address], timeout: 5), onOutput: { _ in })
                 guard self.targetIsCurrent(id, target), !Task.isCancelled else { return }
                 let output = Credentials.redact(result.output, address: address)
                 let pong = output.components(separatedBy: "\n").last { $0.hasPrefix("pong in ") }

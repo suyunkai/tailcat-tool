@@ -198,6 +198,7 @@ private final class SpyCredentialStore: CredentialStore {
         try expectTrue(runner.calls.contains(["-s", "127.0.0.1:6666", "shell", "id"]))
         manager.diagnose(first)
         try await Task.sleep(nanoseconds: 20_000_000)
+        try expectTrue(runner.calls.contains(["--key=new", "ping", "--timeout=3s", "tc" + String(repeating: "T", count: 30)]))
         try await manager.removeDevice(first)
         try expectFalse(transport.handles[6666]!.isRunning)
         try expectTrue(transport.handles[6667]!.isRunning)
