@@ -57,7 +57,7 @@ private final class AuthorizationProbeStore: CredentialStore {
     }
 
     func testAllDevicesBoundedResultsAndNoADBCommands() async throws {
-        let runner = PingProbeRunner(), checker = ReachabilityChecker(runner: runner)
+        let runner = PingProbeRunner(), checker = ReachabilityChecker(runner: runner, pinger: ClientPinger(identities: TestingIdentities()))
         let profiles = (0..<7).map { DeviceProfile(name: "Device \($0)") }
         let addresses = profiles.enumerated().reduce(into: [UUID: String]()) { values, pair in
             values[pair.element.id] = "tc" + String(repeating: Character(String(pair.offset)), count: 30)
@@ -74,7 +74,7 @@ private final class AuthorizationProbeStore: CredentialStore {
         while checker.isRunning { try await Task.sleep(nanoseconds: 10_000_000) }
         try expectEqual(runner.maximumActive, 3)
         try expectEqual(runner.calls.count, 6)
-        try expectTrue(runner.calls.allSatisfy { $0.arguments.starts(with: ["--key=new", "ping", "--timeout=5s"]) && $0.arguments.count == 4 && $0.timeout == 8 })
+        try expectTrue(runner.calls.allSatisfy { $0.arguments[0].hasPrefix("--key=/test-identities/") && $0.arguments[0].hasSuffix("-probe.private.json") && $0.arguments.dropFirst().starts(with: ["ping", "--timeout=5s"]) && $0.arguments.count == 4 && $0.timeout == 8 })
         try expectEqual(checker.results.map(\.id), profiles.map(\.id))
         try expectEqual(checker.results.map(\.state), [.reachable, .reachable, .unreachable, .unreachable, .failed, .failed, .reachable])
         try expectEqual(checker.results[0].latency, "12.3ms")
@@ -89,7 +89,7 @@ private final class AuthorizationProbeStore: CredentialStore {
     }
 
     func testCancellationStopsActiveTestsAndQueueBeforeRestart() async throws {
-        let runner = PingProbeRunner(), checker = ReachabilityChecker(runner: runner)
+        let runner = PingProbeRunner(), checker = ReachabilityChecker(runner: runner, pinger: ClientPinger(identities: TestingIdentities()))
         runner.delay = 5_000_000_000
         let profiles = (0..<8).map { DeviceProfile(name: "Device \($0)") }
         let address = "tc" + String(repeating: "C", count: 30)

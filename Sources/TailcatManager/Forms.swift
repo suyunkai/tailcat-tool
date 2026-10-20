@@ -28,7 +28,7 @@ struct DeviceEditorView: View {
                 TextField("本地端口（留空自动）", text: $port)
                 TextField("远端 ADB 端口", text: $remotePort)
             }.textFieldStyle(.roundedBorder)
-            Text(temporary ? "临时设备不写入地址簿或 Keychain。连接后可使用全部 ADB 操作，也可保存到我的设备；退出应用时清除临时配置。" : "连接凭据保存在本机 Keychain。自动端口从 5556 起分配，已有连接保持。")
+            Text(temporary ? "临时设备配置与连接地址不写入地址簿或 Keychain，退出应用时清除；固定客户端身份单独保存在本机。连接后可使用全部 ADB 操作，也可保存到我的设备。" : "连接凭据保存在本机 Keychain。自动端口从 5556 起分配，已有连接保持。")
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             HStack {

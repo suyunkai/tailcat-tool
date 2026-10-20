@@ -21,10 +21,12 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
         let session = SessionTests(), persistence = PersistenceTests(), process = ProcessTests()
         let integration = ExternalAndInstallerTests()
         let reachability = ReachabilityTests()
+        let identity = IdentityTests()
         var checks: [(String, @MainActor () async throws -> Void)] = [
             ("credential authorization cache / silent observation / update", { try reachability.testCredentialsReuseAuthorizationAndUpdateCache() }),
             ("batch ping / bounded concurrency / latency / redaction / no ADB", { try await reachability.testAllDevicesBoundedResultsAndNoADBCommands() }),
             ("batch cancellation / queue cleanup / restart", { try await reachability.testCancellationStopsActiveTestsAndQueueBeforeRestart() }),
+            ("fixed probe identities / per-device serialization", { try await identity.testProbesSerializeOnlyTheSameSavedIdentity() }),
             ("concurrent sessions / selective disconnect", { try await session.testConcurrentSessionsAndStoppingOnePreservesOther() }),
             ("fixed task target", { try await session.testTasksBindTargetEvenWhenAnotherDeviceConnects() }),
             ("unauthorized transport remains available", { try await session.testUnauthorizedKeepsTunnelAndRejectsDeviceOperations() }),
@@ -53,7 +55,9 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
         ]
         if CommandLine.arguments.contains("--native-tailcat") {
             checks.append(("installed Tailcat / two listeners / selective cleanup", { try await process.testNativeTailcatListeners() }))
-            checks.append(("installed Tailcat / fresh identity per process", { try await process.testNativeEphemeralIdentitiesDifferBetweenProcesses() }))
+            checks.append(("installed Tailcat / saved identity survives restart / isolated devices and probes", { try await identity.testNativeIdentitySurvivesStoreAndProcessRestarts() }))
+            checks.append(("installed Tailcat / invalid identity is preserved / symlinks rejected", { try await identity.testNativeInvalidIdentityIsNeverReplaced() }))
+            checks.append(("installed Tailcat / whitelist accepts saved identity after reconnect / rejects unknown identity", { try await identity.testNativeWhitelistAcceptsTheSavedIdentityAfterReconnect() }))
         }
         if CommandLine.arguments.contains("--keychain") {
             checks.append(("isolated Keychain create / read / update / delete", { try persistence.testIsolatedKeychainRoundTrip() }))

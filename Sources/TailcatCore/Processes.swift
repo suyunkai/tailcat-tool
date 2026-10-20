@@ -183,7 +183,7 @@ public enum ForwardOutput {
 }
 
 @MainActor public protocol ForwardTransport: AnyObject {
-    func open(address: String, preferredPort: Int?, remotePort: Int,
+    func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity,
               onLog: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection
 }
 
@@ -193,7 +193,7 @@ public enum ForwardOutput {
     private let executable: URL
     private let runner: any CommandExecuting
     public init(executable: URL, runner: any CommandExecuting) { self.executable = executable; self.runner = runner }
-    public func open(address: String, preferredPort: Int?, remotePort: Int,
+    public func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity,
                      onLog: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection {
         let candidates = preferredPort.map { [$0] } ?? Array(5556...5655)
         for candidate in candidates {
@@ -205,9 +205,9 @@ public enum ForwardOutput {
             Self.reservedPorts.insert(candidate)
             let startup = Startup()
             let redactor = OutputRedactor(address: address)
-            // A saved client-default would be shared by every process, causing
-            // concurrent sessions to compete for the same DERP identity.
-            let command = Command(executable, ["--key=new", "forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
+            // Reconnect with the device's saved identity. Other devices and
+            // probes use different saved identities to avoid DERP contention.
+            let command = Command(executable, [identity.argument, "forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
             let handle: any RunningProcess
             do {
                 let process = try runner.start(command, onOutput: { chunk in

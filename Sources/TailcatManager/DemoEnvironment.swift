@@ -10,7 +10,7 @@ import TailcatCore
 
 @MainActor private final class DemoTransport: ForwardTransport {
     private var nextPort = 5556
-    func open(address: String, preferredPort: Int?, remotePort: Int,
+    func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity,
               onLog: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection {
         let port = preferredPort ?? nextPort; nextPort += 1
         onLog("示例通道监听 127.0.0.1:\(port)")
@@ -32,10 +32,18 @@ import TailcatCore
         if args.contains(where: { $0.contains("getprop ro.product.model") }) {
             return CommandResult(output: "E245（示例）\nantora-demo\n11\nDEMO-ONLY\nuid=0(root) gid=0(root)\n")
         }
-        if args.starts(with: ["--key=new", "ping"]) { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
+        if args.count > 1, args[1] == "ping" { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
         onOutput("示例任务正在执行，目标 \(args.dropFirst().first ?? "")\n")
         try await Task.sleep(nanoseconds: 1_500_000_000)
         return CommandResult(output: "示例任务完成，未执行真实设备命令。\n")
+    }
+}
+
+@MainActor private final class DemoIdentities: ClientIdentityProviding {
+    func identity(deviceID: UUID, role: ClientIdentityRole, executable: URL,
+                  runner: any CommandExecuting) async throws -> ClientIdentity {
+        ClientIdentity(file: URL(fileURLWithPath: "/demo/\(deviceID)-\(role.rawValue).private.json"),
+                       publicKey: "nodekey:" + String(repeating: "0", count: 64))
     }
 }
 
@@ -49,7 +57,7 @@ import TailcatCore
         let settings = ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", scrcpy: "/usr/bin/true")
         let transport = DemoTransport()
         let manager = SessionManager(configuration: AppConfiguration(profiles: profiles, tools: settings),
-                                     credentials: vault, runner: DemoRunner(),
+                                     credentials: vault, runner: DemoRunner(), identities: DemoIdentities(),
                                      allowsComponentInstallation: false,
                                      makeTransport: { _, _ in transport })
         manager.connect(profiles[0].id); manager.connect(profiles[1].id)

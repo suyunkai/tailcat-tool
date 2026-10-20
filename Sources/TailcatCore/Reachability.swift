@@ -32,8 +32,9 @@ public struct ReachabilityResult: Identifiable {
     @Published public private(set) var isRunning = false
     @Published public private(set) var isCancelling = false
     private let runner: any CommandExecuting
+    private let pinger: ClientPinger
     private var job: Task<Void, Never>?
-    public init(runner: any CommandExecuting) { self.runner = runner }
+    public init(runner: any CommandExecuting, pinger: ClientPinger? = nil) { self.runner = runner; self.pinger = pinger ?? ClientPinger() }
     public var completedCount: Int { results.filter { $0.state != .queued && $0.state != .testing }.count }
     public var reachableCount: Int { results.filter { $0.state == .reachable }.count }
     public var adbOnlineCount: Int { results.filter { $0.adbState == .online }.count }
@@ -83,7 +84,7 @@ public struct ReachabilityResult: Identifiable {
                 throw ManagerError.message("没有有效连接凭据，请编辑设备或导入地址簿")
             }
             try Task.checkCancellation()
-            let result = try await runner.run(Command(executable, ["--key=new", "ping", "--timeout=5s", credential], timeout: 8), onOutput: { _ in })
+            let result = try await pinger.ping(deviceID: profile.id, executable: executable, runner: runner, address: credential, seconds: 5)
             try Task.checkCancellation()
             if result.cancelled { throw CancellationError() }
             let output = Credentials.redact(result.output, address: credential)

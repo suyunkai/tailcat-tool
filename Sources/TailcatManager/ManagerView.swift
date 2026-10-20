@@ -292,7 +292,7 @@ private struct DeviceDetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack { StatusDot(state: session.state); Text(session.state.label).font(.headline) }
                         if manager.isTemporary(profile.id) {
-                            Text("临时连接仅保留在内存中。断开后可重连；关闭临时设备或退出应用时清除配置。")
+                            Text("临时设备配置与连接地址仅保留在内存中，关闭临时设备或退出应用时清除；固定客户端身份单独保存在本机。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         if let external = manager.externalSessions[profile.id], !external.isEmpty {

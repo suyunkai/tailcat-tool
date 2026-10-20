@@ -25,7 +25,7 @@ import TailcatCore
 
 @MainActor private final class StubTransport: ForwardTransport {
     let handle = StubHandle()
-    func open(address: String, preferredPort: Int?, remotePort: Int, onLog: @escaping (String) -> Void,
+    func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity, onLog: @escaping (String) -> Void,
               onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection { ForwardConnection(handle: handle, port: preferredPort ?? 5560) }
 }
 
@@ -101,7 +101,7 @@ import TailcatCore
         }
         scanner.found = [external.id: [ExternalCLISession(pid: 1001, port: 5556, state: .online)]]
         let manager = SessionManager(configuration: AppConfiguration(profiles: [external, owned], tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true")),
-            credentials: vault, runner: runner, monitorInterval: 60_000_000_000, cliScanner: scanner, makeTransport: { _, _ in transport })
+            credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000, cliScanner: scanner, makeTransport: { _, _ in transport })
         await manager.refreshExternalConnections()
         try expectTrue(manager.session(external.id).isExternalCLI)
         try expectEqual(manager.externalActiveCount, 1)
@@ -141,7 +141,7 @@ import TailcatCore
         }
         scanner.found = [profile.id: [ExternalCLISession(pid: 1001, port: 5556, state: .online)]]
         let manager = SessionManager(configuration: AppConfiguration(profiles: [profile], tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", scrcpy: "/usr/bin/true")),
-            credentials: vault, runner: runner, monitorInterval: 60_000_000_000, cliScanner: scanner)
+            credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000, cliScanner: scanner)
         await manager.refreshExternalConnections()
         await manager.refreshDeviceInformation(profile.id)?.value
         return (manager, runner, scanner, profile)
@@ -247,7 +247,7 @@ import TailcatCore
         scanner.found = [profile.id: [ExternalCLISession(pid: 1001, port: 5556, state: .online)]]
         let store = ConfigurationStore(directory: root)
         let manager = SessionManager(configuration: AppConfiguration(profiles: [profile], tools: ToolSettings(scrcpy: "")),
-                                     configurationStore: store, credentials: MemoryCredentialStore(), runner: runner, cliScanner: scanner)
+                                     configurationStore: store, credentials: MemoryCredentialStore(), runner: runner, identities: TestingIdentities(), cliScanner: scanner)
         await manager.refreshExternalConnections()
         try manager.configureInstalledTool(.scrcpy, path: "/usr/bin/true")
         try expectEqual(try store.load().tools.scrcpy, "/usr/bin/true")

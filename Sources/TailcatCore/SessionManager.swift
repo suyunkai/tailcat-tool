@@ -31,6 +31,8 @@ import Combine
     private var externalInfoAttempted: Set<String> = []
     private let configurationStore: ConfigurationStore?
     private let credentials: any CredentialStore
+    private let identities: any ClientIdentityProviding
+    private let pinger: ClientPinger
     private let runner: any CommandExecuting
     private let makeTransport: @MainActor (URL, any CommandExecuting) -> any ForwardTransport
     private let cliScanner: (any CLISessionScanning)?
@@ -54,6 +56,7 @@ import Combine
                 configurationStore: ConfigurationStore? = nil,
                 credentials: any CredentialStore,
                 runner: any CommandExecuting,
+                identities: (any ClientIdentityProviding)? = nil,
                 monitorInterval: UInt64 = 3_000_000_000,
                 cliScanner: (any CLISessionScanning)? = nil,
                 allowsComponentInstallation: Bool = true,
@@ -63,11 +66,15 @@ import Combine
         self.configurationStore = configurationStore
         self.credentials = CachedCredentialStore(credentials)
         self.runner = runner
+        let identities = identities ?? ClientIdentityStore()
+        self.identities = identities
+        let pinger = ClientPinger(identities: identities)
+        self.pinger = pinger
         self.monitorInterval = monitorInterval
         self.makeTransport = makeTransport
         self.cliScanner = cliScanner
         self.componentInstaller = ComponentInstaller(runner: runner)
-        self.reachability = ReachabilityChecker(runner: runner)
+        self.reachability = ReachabilityChecker(runner: runner, pinger: pinger)
         self.allowsComponentInstallation = allowsComponentInstallation
         for profile in profiles { sessions[profile.id] = DeviceSession() }
     }
@@ -348,9 +355,12 @@ import Combine
                 let parsed = try await self.runner.run(Command(tailcat, ["parse", address], timeout: 5), onOutput: { _ in })
                 try parsed.requireSuccess(); try Task.checkCancellation()
                 guard self.isCurrent(id, generation) else { return }
+                let identity = try await self.identities.identity(deviceID: id, role: .connection, executable: tailcat, runner: self.runner)
+                try Task.checkCancellation()
+                guard self.isCurrent(id, generation) else { return }
                 self.log(id, "正在建立独立 Tailcat 转发通道")
                 let transport = self.makeTransport(tailcat, self.runner)
-                let connection = try await transport.open(address: address, preferredPort: profile.preferredPort, remotePort: profile.remotePort,
+                let connection = try await transport.open(address: address, preferredPort: profile.preferredPort, remotePort: profile.remotePort, identity: identity,
                     onLog: { [weak self] chunk in
                         guard let self, self.isCurrent(id, generation) else { return }
                         self.log(id, Credentials.redact(chunk, address: address))
@@ -520,7 +530,7 @@ import Combine
             do {
                 guard let address = try self.address(for: id) else { return }
                 let executable = try ToolLocator.executable(self.tools.tailcat, name: "Tailcat")
-                let result = try await self.runner.run(Command(executable, ["--key=new", "ping", "--timeout=3s", address], timeout: 5), onOutput: { _ in })
+                let result = try await self.pinger.ping(deviceID: id, executable: executable, runner: self.runner, address: address, seconds: 3)
                 guard self.targetIsCurrent(id, target), !Task.isCancelled else { return }
                 let output = Credentials.redact(result.output, address: address)
                 let pong = output.components(separatedBy: "\n").last { $0.hasPrefix("pong in ") }

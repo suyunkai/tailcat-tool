@@ -23,7 +23,7 @@ private final class SpyCredentialStore: CredentialStore {
     var exits: [Int: (Int32) -> Void] = [:]
     var openDelay: UInt64 = 0
     var nextPort = 5556
-    func open(address: String, preferredPort: Int?, remotePort: Int,
+    func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity,
               onLog: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection {
         if openDelay > 0 { try await Task.sleep(nanoseconds: openDelay) }
         let port = preferredPort ?? nextPort; nextPort += 1
@@ -64,7 +64,7 @@ private final class SpyCredentialStore: CredentialStore {
         let runner = FakeRunner(), transport = FakeTransport()
         let settings = ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", scrcpy: "/usr/bin/true")
         let manager = SessionManager(configuration: AppConfiguration(profiles: profiles, tools: settings),
-                                     credentials: vault, runner: runner, monitorInterval: 60_000_000_000,
+                                     credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000,
                                      makeTransport: { _, _ in transport })
         return (manager, runner, transport, profiles)
     }
@@ -155,7 +155,7 @@ private final class SpyCredentialStore: CredentialStore {
         let store = ConfigurationStore(directory: root.appendingPathComponent("gui"))
         let settings = ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", addressBookDirectory: legacy.path)
         let manager = SessionManager(configuration: AppConfiguration(tools: settings), configurationStore: store,
-                                     credentials: vault, runner: runner, makeTransport: { _, _ in transport })
+                                     credentials: vault, runner: runner, identities: TestingIdentities(), makeTransport: { _, _ in transport })
         try expectEqual(try manager.importLegacy(), 1)
         let id = manager.profiles[0].id
         let edited = "tc" + String(repeating: "E", count: 30)
@@ -180,7 +180,7 @@ private final class SpyCredentialStore: CredentialStore {
         let config = AppConfiguration(profiles: [saved], tools: settings)
         try store.save(config)
         let before = try Data(contentsOf: root.appendingPathComponent("configuration.json"))
-        let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner,
+        let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner, identities: TestingIdentities(),
                                      monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
         await manager.connect(saved.id)?.value
         vault.resetCounts()
@@ -198,7 +198,7 @@ private final class SpyCredentialStore: CredentialStore {
         try expectTrue(runner.calls.contains(["-s", "127.0.0.1:6666", "shell", "id"]))
         manager.diagnose(first)
         try await Task.sleep(nanoseconds: 20_000_000)
-        try expectTrue(runner.calls.contains(["--key=new", "ping", "--timeout=3s", "tc" + String(repeating: "T", count: 30)]))
+        try expectTrue(runner.calls.contains(["--key=/test-identities/\(first.uuidString.lowercased())-probe.private.json", "ping", "--timeout=3s", "tc" + String(repeating: "T", count: 30)]))
         try await manager.removeDevice(first)
         try expectFalse(transport.handles[6666]!.isRunning)
         try expectTrue(transport.handles[6667]!.isRunning)
@@ -214,7 +214,7 @@ private final class SpyCredentialStore: CredentialStore {
         try expectTrue(manager.temporaryProfiles.isEmpty)
         try expectTrue(transport.handles.values.allSatisfy { !$0.isRunning })
         try expectEqual(vault.reads, 0); try expectEqual(vault.writes, 0); try expectEqual(vault.deletes, 0)
-        let restored = SessionManager(configuration: try store.load(), credentials: vault, runner: runner)
+        let restored = SessionManager(configuration: try store.load(), credentials: vault, runner: runner, identities: TestingIdentities())
         try expectTrue(restored.temporaryProfiles.isEmpty)
         try expectEqual(restored.allProfiles.count, 1)
     }
@@ -224,7 +224,7 @@ private final class SpyCredentialStore: CredentialStore {
         defer { try? FileManager.default.removeItem(at: root) }
         let runner = FakeRunner(), transport = FakeTransport(), vault = SpyCredentialStore(), store = ConfigurationStore(directory: root)
         let config = AppConfiguration(tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true"))
-        let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner,
+        let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner, identities: TestingIdentities(),
                                      monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
         let address = "tc" + String(repeating: "P", count: 30)
         let id = try manager.saveTemporaryDevice(address: address, preferredPort: 6666)
@@ -258,7 +258,7 @@ private final class SpyCredentialStore: CredentialStore {
         try Data("keep".utf8).write(to: blocked)
         let vault = SpyCredentialStore(), runner = FakeRunner(), transport = FakeTransport()
         let manager = SessionManager(configuration: AppConfiguration(tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true")),
-            configurationStore: ConfigurationStore(directory: blocked), credentials: vault, runner: runner,
+            configurationStore: ConfigurationStore(directory: blocked), credentials: vault, runner: runner, identities: TestingIdentities(),
             monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
         let id = try manager.saveTemporaryDevice(address: "tc" + String(repeating: "F", count: 30), preferredPort: 6666)
         await manager.connect(id)?.value
