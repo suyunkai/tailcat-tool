@@ -25,7 +25,9 @@ private final class AuthorizationProbeStore: CredentialStore {
         throw ManagerError.message("测试不应创建转发进程")
     }
     func run(_ command: Command, onOutput: @escaping (String) -> Void) async throws -> CommandResult {
-        calls.append(command); active += 1; maximumActive = max(active, maximumActive)
+        calls.append(command)
+        if command.arguments.first == "parse" { return CommandResult(output: "{\"RegionID\":901}") }
+        active += 1; maximumActive = max(active, maximumActive)
         defer { active -= 1 }
         do { try await Task.sleep(nanoseconds: delay) }
         catch { cancelled += 1; throw error }
@@ -73,8 +75,11 @@ private final class AuthorizationProbeStore: CredentialStore {
         }
         while checker.isRunning { try await Task.sleep(nanoseconds: 10_000_000) }
         try expectEqual(runner.maximumActive, 3)
-        try expectEqual(runner.calls.count, 6)
-        try expectTrue(runner.calls.allSatisfy { $0.arguments[0].hasPrefix("--key=/test-identities/") && $0.arguments[0].hasSuffix("-probe.private.json") && $0.arguments.dropFirst().starts(with: ["ping", "--timeout=5s"]) && $0.arguments.count == 4 && $0.timeout == 8 })
+        let pings = runner.calls.filter { $0.arguments.contains("ping") }
+        try expectEqual(runner.calls.filter { $0.arguments.first == "parse" }.count, 0)
+        try expectEqual(pings.count, 6)
+        let relay = "--derpmap-url=https://tailcat.dev/derpmap.json"
+        try expectTrue(pings.allSatisfy { $0.arguments[0].hasPrefix("--key=/test-identities/") && $0.arguments[0].hasSuffix("-probe.private.json") && $0.arguments.dropFirst().starts(with: [relay, "ping", "--timeout=5s"]) && $0.arguments.count == 5 && $0.timeout == 8 })
         try expectEqual(checker.results.map(\.id), profiles.map(\.id))
         try expectEqual(checker.results.map(\.state), [.reachable, .reachable, .unreachable, .unreachable, .failed, .failed, .reachable])
         try expectEqual(checker.results[0].latency, "12.3ms")
@@ -98,7 +103,7 @@ private final class AuthorizationProbeStore: CredentialStore {
         checker.cancel()
         checker.start(profiles: [], tailcatPath: "/usr/bin/true") { _ in nil }
         await checker.shutdown()
-        try expectEqual(runner.calls.count, 3)
+        try expectEqual(runner.calls.filter { $0.arguments.contains("ping") }.count, 3)
         try expectEqual(runner.cancelled, 3)
         try expectEqual(runner.active, 0)
         try expectTrue(checker.results.allSatisfy { $0.state == .cancelled })

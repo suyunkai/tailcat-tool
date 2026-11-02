@@ -11,6 +11,12 @@ dist/
 configuration.json
 *credentials*.json
 *secrets*.json
+*.private.json
+Identities/
+# Local relay maps and exported presets can contain private node addresses.
+derpmap*.json
+derp-map*.json
+relay-presets*.json
 .local/
 .state/
 .config/

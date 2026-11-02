@@ -36,10 +36,25 @@ import TailcatCore
         async let b = pinger.ping(deviceID: first, executable: executable, runner: runner, address: "test", seconds: 3)
         async let c = pinger.ping(deviceID: second, executable: executable, runner: runner, address: "test", seconds: 3)
         _ = try await (a, b, c)
-        try expectEqual(runner.calls.count, 3)
+        let pings = runner.calls.filter { $0.arguments.contains("ping") }
+        try expectEqual(pings.count, 3)
         try expectEqual(runner.maximumForKey, 1)
         try expectEqual(runner.maximumTotal, 2)
-        try expectEqual(Set(runner.calls.map { $0.arguments[0] }).count, 2)
+        try expectEqual(Set(pings.map { $0.arguments[0] }).count, 2)
+    }
+
+    func testCustomRelayIsExplicitAndPreservesTheDeviceIdentity() async throws {
+        let runner = IdentityProbeRunner(), pinger = ClientPinger(identities: TestingIdentities())
+        let id = UUID(), executable = URL(fileURLWithPath: "/usr/bin/true")
+        _ = try await pinger.ping(deviceID: id, executable: executable, runner: runner, address: "default-address", seconds: 3)
+        _ = try await pinger.ping(deviceID: id, executable: executable, runner: runner, address: "custom-address", seconds: 3,
+                                  relaySource: "https://relay.example/map.json")
+        _ = try await pinger.ping(deviceID: id, executable: executable, runner: runner, address: "another-default", seconds: 3)
+        let pings = runner.calls.filter { $0.arguments.contains("ping") }
+        try expectEqual(pings.count, 3)
+        try expectEqual(Set(pings.map { $0.arguments[0] }).count, 1)
+        try expectEqual(pings.map { $0.arguments[1] }, [TailcatRelay.argument, "--derpmap-url=https://relay.example/map.json", TailcatRelay.argument])
+        try expectEqual(pings.map { $0.arguments.last }, ["default-address", "custom-address", "another-default"])
     }
 
     func testNativeIdentitySurvivesStoreAndProcessRestarts() async throws {

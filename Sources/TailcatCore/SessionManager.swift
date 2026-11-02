@@ -7,6 +7,7 @@ import Combine
     @Published public private(set) var sessions: [UUID: DeviceSession] = [:]
     @Published public private(set) var tasks: [DeviceTask] = []
     @Published public private(set) var tools: ToolSettings
+    @Published public private(set) var relayPresets: [RelayPreset]
     @Published public private(set) var externalSessions: [UUID: [ExternalCLISession]] = [:]
     @Published public private(set) var externalScanError: String?
     @Published public var notice: String?
@@ -34,7 +35,7 @@ import Combine
     private let identities: any ClientIdentityProviding
     private let pinger: ClientPinger
     private let runner: any CommandExecuting
-    private let makeTransport: @MainActor (URL, any CommandExecuting) -> any ForwardTransport
+    private let makeTransport: @MainActor (URL, any CommandExecuting, String?) -> any ForwardTransport
     private let cliScanner: (any CLISessionScanning)?
     private var cliMonitor: Task<Void, Never>?
     private var externalScanInProgress = false
@@ -60,9 +61,10 @@ import Combine
                 monitorInterval: UInt64 = 3_000_000_000,
                 cliScanner: (any CLISessionScanning)? = nil,
                 allowsComponentInstallation: Bool = true,
-                makeTransport: @escaping @MainActor (URL, any CommandExecuting) -> any ForwardTransport = { TailcatTransport(executable: $0, runner: $1) }) {
+                makeTransport: @escaping @MainActor (URL, any CommandExecuting, String?) -> any ForwardTransport = { TailcatTransport(executable: $0, runner: $1, relaySource: $2) }) {
         self.profiles = configuration.profiles
         self.tools = configuration.tools
+        self.relayPresets = configuration.relayPresets
         self.configurationStore = configurationStore
         self.credentials = CachedCredentialStore(credentials)
         self.runner = runner
@@ -184,8 +186,9 @@ import Combine
     }
 
     public func saveDevice(id: UUID? = nil, name: String, address: String,
-                           preferredPort: Int?, remotePort: Int) throws -> UUID {
+                           preferredPort: Int?, remotePort: Int, relaySource: String? = nil) throws -> UUID {
         let (name, address) = try validatedDeviceInput(name: name, address: address, preferredPort: preferredPort, remotePort: remotePort)
+        let relaySource = try TailcatRelay.normalize(relaySource)
         let deviceID = id ?? UUID()
         guard !isTemporary(deviceID) else { throw ManagerError.message("请使用“保存到我的设备”保存临时会话") }
         guard session(deviceID).serial == nil, !session(deviceID).state.isBusy else {
@@ -195,6 +198,7 @@ import Combine
         var updated = profiles
         var profile = updated.first { $0.id == deviceID } ?? DeviceProfile(id: deviceID, name: name)
         profile.name = name; profile.preferredPort = preferredPort; profile.remotePort = remotePort
+        profile.relaySource = relaySource
         if let index = updated.firstIndex(where: { $0.id == deviceID }) { updated[index] = profile }
         else { updated.append(profile) }
         try credentials.write(address, id: deviceID)
@@ -214,7 +218,7 @@ import Combine
 
     /// Temporary profiles and credentials exist only in memory until explicitly promoted.
     @discardableResult public func saveTemporaryDevice(id: UUID? = nil, name: String = "", address: String,
-                                                      preferredPort: Int? = nil, remotePort: Int = 5555) throws -> UUID {
+                                                      preferredPort: Int? = nil, remotePort: Int = 5555, relaySource: String? = nil) throws -> UUID {
         let suppliedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let defaultName = id.flatMap { existing in temporaryProfiles.first { $0.id == existing }?.name } ?? "临时设备 \(nextTemporaryNumber)"
         let (name, address) = try validatedDeviceInput(name: suppliedName.isEmpty ? defaultName : suppliedName,
@@ -224,7 +228,8 @@ import Combine
             guard session(id).serial == nil, !session(id).state.isBusy else { throw ManagerError.message("请先断开该临时设备，再修改连接配置") }
         }
         let deviceID = id ?? UUID()
-        let profile = DeviceProfile(id: deviceID, name: name, preferredPort: preferredPort, remotePort: remotePort)
+        let profile = DeviceProfile(id: deviceID, name: name, preferredPort: preferredPort, remotePort: remotePort,
+                                    relaySource: try TailcatRelay.normalize(relaySource))
         temporaryCredentials[deviceID] = address
         if let index = temporaryProfiles.firstIndex(where: { $0.id == deviceID }) { temporaryProfiles[index] = profile }
         else { temporaryProfiles.append(profile); sessions[deviceID] = DeviceSession(); nextTemporaryNumber += 1 }
@@ -291,7 +296,7 @@ import Combine
         guard ownedActiveCount == 0, !sessions.values.contains(where: { $0.state.isBusy }) else {
             throw ManagerError.message("请先断开应用管理的连接，再修改工具路径")
         }
-        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: settings))
+        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: settings, relayPresets: relayPresets))
         tools = settings
         externalRevision = UUID(); externalSessions = [:]
     }
@@ -299,7 +304,7 @@ import Combine
     public func configureInstalledTool(_ component: ToolComponent, path: String) throws {
         _ = try ToolLocator.executable(path, name: component.label)
         var settings = tools; settings[component] = path
-        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: settings))
+        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: settings, relayPresets: relayPresets))
         // Running owned sessions retain their captured tool URLs and process handles.
         tools = settings; externalRevision = UUID()
     }
@@ -324,7 +329,21 @@ import Combine
     }
 
     private func persist(profiles: [DeviceProfile]) throws {
-        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: tools))
+        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: tools, relayPresets: relayPresets))
+    }
+
+    @discardableResult public func saveRelayPreset(id: UUID? = nil, name: String, source: String) throws -> UUID {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 80 else { throw ManagerError.message("预设名称需要 1–80 个字符") }
+        guard let source = try TailcatRelay.normalize(source) else { throw ManagerError.message("请填写预设的 JSON 链接或内容") }
+        guard !relayPresets.contains(where: { $0.id != id && $0.name == name }) else { throw ManagerError.message("已有同名预设，请修改名称或选择该预设后更新") }
+        let preset = RelayPreset(id: id ?? UUID(), name: name, source: source)
+        var updated = relayPresets
+        if let index = updated.firstIndex(where: { $0.id == preset.id }) { updated[index] = preset }
+        else { updated.append(preset) }
+        try configurationStore?.save(AppConfiguration(profiles: profiles, tools: tools, relayPresets: updated))
+        relayPresets = updated
+        return preset.id
     }
 
     @discardableResult public func connect(_ id: UUID) -> Task<Void, Never>? {
@@ -359,7 +378,7 @@ import Combine
                 try Task.checkCancellation()
                 guard self.isCurrent(id, generation) else { return }
                 self.log(id, "正在建立独立 Tailcat 转发通道")
-                let transport = self.makeTransport(tailcat, self.runner)
+                let transport = self.makeTransport(tailcat, self.runner, profile.relaySource)
                 let connection = try await transport.open(address: address, preferredPort: profile.preferredPort, remotePort: profile.remotePort, identity: identity,
                     onLog: { [weak self] chunk in
                         guard let self, self.isCurrent(id, generation) else { return }
@@ -530,7 +549,8 @@ import Combine
             do {
                 guard let address = try self.address(for: id) else { return }
                 let executable = try ToolLocator.executable(self.tools.tailcat, name: "Tailcat")
-                let result = try await self.pinger.ping(deviceID: id, executable: executable, runner: self.runner, address: address, seconds: 3)
+                let source = self.allProfiles.first(where: { $0.id == id })?.relaySource
+                let result = try await self.pinger.ping(deviceID: id, executable: executable, runner: self.runner, address: address, seconds: 3, relaySource: source)
                 guard self.targetIsCurrent(id, target), !Task.isCancelled else { return }
                 let output = Credentials.redact(result.output, address: address)
                 let pong = output.components(separatedBy: "\n").last { $0.hasPrefix("pong in ") }

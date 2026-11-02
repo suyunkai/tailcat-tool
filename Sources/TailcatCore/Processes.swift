@@ -192,7 +192,10 @@ public enum ForwardOutput {
     fileprivate static var reservedPorts: Set<Int> = []
     private let executable: URL
     private let runner: any CommandExecuting
-    public init(executable: URL, runner: any CommandExecuting) { self.executable = executable; self.runner = runner }
+    private let relaySource: String?
+    public init(executable: URL, runner: any CommandExecuting, relaySource: String? = nil) {
+        self.executable = executable; self.runner = runner; self.relaySource = relaySource
+    }
     public func open(address: String, preferredPort: Int?, remotePort: Int, identity: ClientIdentity,
                      onLog: @escaping (String) -> Void, onExit: @escaping (Int32) -> Void) async throws -> ForwardConnection {
         let candidates = preferredPort.map { [$0] } ?? Array(5556...5655)
@@ -207,9 +210,11 @@ public enum ForwardOutput {
             let redactor = OutputRedactor(address: address)
             // Reconnect with the device's saved identity. Other devices and
             // probes use different saved identities to avoid DERP contention.
-            let command = Command(executable, [identity.argument, "forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
             let handle: any RunningProcess
             do {
+                let relay = try await TailcatRelay.prepare(relaySource)
+                try Task.checkCancellation()
+                let command = Command(executable, [identity.argument, relay.argument, "forward", "--bind=127.0.0.1", address, "\(candidate):\(remotePort)"])
                 let process = try runner.start(command, onOutput: { chunk in
                     startup.output = String((startup.output + chunk).suffix(16384))
                     let safe = redactor.append(chunk)
@@ -219,7 +224,7 @@ public enum ForwardOutput {
                     if !tail.isEmpty { onLog(tail) }
                     startup.exitCode = code; onExit(code)
                 })
-                handle = ReservedForwardProcess(process, port: candidate)
+                handle = ReservedForwardProcess(process, port: candidate, relay: relay)
             } catch { Self.reservedPorts.remove(candidate); throw error }
             do {
                 for _ in 0..<50 {
@@ -246,11 +251,15 @@ public enum ForwardOutput {
 @MainActor private final class ReservedForwardProcess: RunningProcess {
     private let process: any RunningProcess
     private let port: Int
-    init(_ process: any RunningProcess, port: Int) { self.process = process; self.port = port }
+    private let relay: RelayMapLease
+    init(_ process: any RunningProcess, port: Int, relay: RelayMapLease) {
+        self.process = process; self.port = port; self.relay = relay
+    }
     var pid: Int32 { process.pid }
     var isRunning: Bool { process.isRunning }
     func stop() async {
         await process.stop()
+        relay.stop()
         if !process.isRunning { TailcatTransport.reservedPorts.remove(port) }
     }
 }

@@ -101,7 +101,7 @@ import TailcatCore
         }
         scanner.found = [external.id: [ExternalCLISession(pid: 1001, port: 5556, state: .online)]]
         let manager = SessionManager(configuration: AppConfiguration(profiles: [external, owned], tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true")),
-            credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000, cliScanner: scanner, makeTransport: { _, _ in transport })
+            credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000, cliScanner: scanner, makeTransport: { _, _, _ in transport })
         await manager.refreshExternalConnections()
         try expectTrue(manager.session(external.id).isExternalCLI)
         try expectEqual(manager.externalActiveCount, 1)

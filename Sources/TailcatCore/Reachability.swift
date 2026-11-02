@@ -84,7 +84,7 @@ public struct ReachabilityResult: Identifiable {
                 throw ManagerError.message("没有有效连接凭据，请编辑设备或导入地址簿")
             }
             try Task.checkCancellation()
-            let result = try await pinger.ping(deviceID: profile.id, executable: executable, runner: runner, address: credential, seconds: 5)
+            let result = try await pinger.ping(deviceID: profile.id, executable: executable, runner: runner, address: credential, seconds: 5, relaySource: profile.relaySource)
             try Task.checkCancellation()
             if result.cancelled { throw CancellationError() }
             let output = Credentials.redact(result.output, address: credential)

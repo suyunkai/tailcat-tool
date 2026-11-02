@@ -58,7 +58,9 @@ import TailcatCore
             do {
                 // Occupied OS ports may require extra bind attempts.
                 try expectTrue(runner.starts.count >= 2)
-                try expectTrue(runner.starts.allSatisfy { [firstIdentity.argument, secondIdentity.argument].contains($0.arguments[0]) && $0.arguments.dropFirst().starts(with: ["forward", "--bind=127.0.0.1"]) })
+                // The public example is an old short address for region 302.
+                let relay = "--derpmap-url=https://tailcat.dev/derpmap.json"
+                try expectTrue(runner.starts.allSatisfy { [firstIdentity.argument, secondIdentity.argument].contains($0.arguments[0]) && $0.arguments.dropFirst().starts(with: [relay, "forward", "--bind=127.0.0.1"]) })
                 try expectFalse(first.port == second.port)
                 try expectTrue(first.handle.isRunning && second.handle.isRunning)
                 await first.handle.stop()

@@ -13,6 +13,9 @@ struct DeviceEditorView: View {
     @State private var port = ""
     @State private var remotePort = "5555"
     @State private var reveal = false
+    @State private var relaySelection = "default"
+    @State private var relaySource = ""
+    @State private var presetName = ""
     @State private var error: String?
     init(manager: SessionManager, profile: DeviceProfile?, temporary: Bool = false, saved: @escaping (UUID) -> Void) {
         self.manager = manager; self.profile = profile; self.temporary = temporary; self.saved = saved
@@ -27,7 +30,29 @@ struct DeviceEditorView: View {
                 Toggle("显示完整连接凭据", isOn: $reveal)
                 TextField("本地端口（留空自动）", text: $port)
                 TextField("远端 ADB 端口", text: $remotePort)
+                Picker("DERP 中继", selection: $relaySelection) {
+                    Text("默认（官方节点）").tag("default")
+                    ForEach(manager.relayPresets) { preset in Text(preset.name).tag(preset.id.uuidString) }
+                    Text("自定义 JSON 链接或内容").tag("custom")
+                }
             }.textFieldStyle(.roundedBorder)
+            if relaySelection != "default" {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("DERP JSON 链接或内容").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $relaySource)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(height: 100)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
+                        .accessibilityLabel("DERP JSON 链接或内容")
+                    HStack {
+                        TextField("预设名称", text: $presetName).textFieldStyle(.roundedBorder)
+                        Button("保存为预设") { savePreset() }
+                            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || relaySource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    Text("仅作用于当前设备。保存为预设后，新建连接时可快捷选择。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Text(temporary ? "临时设备配置与连接地址不写入地址簿或 Keychain，退出应用时清除；固定客户端身份单独保存在本机。连接后可使用全部 ADB 操作，也可保存到我的设备。" : "连接凭据保存在本机 Keychain。自动端口从 5556 起分配，已有连接保持。")
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
@@ -36,10 +61,22 @@ struct DeviceEditorView: View {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(temporary && profile == nil ? "连接" : "保存") { save() }.keyboardShortcut(.defaultAction)
             }
-        }.padding(24).frame(width: 500)
+        }.padding(24).frame(width: 540)
+        .onChange(of: relaySelection) { selection in
+            if selection == "default" { relaySource = ""; presetName = "" }
+            else if let preset = manager.relayPresets.first(where: { $0.id.uuidString == selection }) {
+                relaySource = preset.source; presetName = preset.name
+            } else { presetName = "" }
+        }
         .onAppear {
             guard let profile else { return }
             name = profile.name; port = profile.preferredPort.map(String.init) ?? ""; remotePort = String(profile.remotePort)
+            relaySource = profile.relaySource ?? ""
+            if !relaySource.isEmpty {
+                if let preset = manager.relayPresets.first(where: { $0.source == relaySource }) {
+                    relaySelection = preset.id.uuidString; presetName = preset.name
+                } else { relaySelection = "custom" }
+            }
             do { address = try manager.addressForEditing(profile.id) }
             catch { self.error = error.localizedDescription }
         }
@@ -51,14 +88,27 @@ struct DeviceEditorView: View {
             guard portText.isEmpty || local != nil, let remote = Int(remotePort) else {
                 throw ManagerError.message("端口需要填写整数")
             }
+            guard relaySelection == "default" || !relaySource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManagerError.message("请填写 DERP JSON 链接或内容，或选择默认官方节点")
+            }
             let id: UUID
             if temporary {
-                id = try manager.saveTemporaryDevice(id: profile?.id, name: name, address: address, preferredPort: local, remotePort: remote)
+                id = try manager.saveTemporaryDevice(id: profile?.id, name: name, address: address, preferredPort: local, remotePort: remote,
+                                                    relaySource: relaySelection == "default" ? nil : relaySource)
                 if profile == nil { manager.connect(id) }
             } else {
-                id = try manager.saveDevice(id: profile?.id, name: name, address: address, preferredPort: local, remotePort: remote)
+                id = try manager.saveDevice(id: profile?.id, name: name, address: address, preferredPort: local, remotePort: remote,
+                                           relaySource: relaySelection == "default" ? nil : relaySource)
             }
             saved(id); dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+    private func savePreset() {
+        do {
+            let id = try manager.saveRelayPreset(id: UUID(uuidString: relaySelection), name: presetName, source: relaySource)
+            relaySelection = id.uuidString
+            if let preset = manager.relayPresets.first(where: { $0.id == id }) { relaySource = preset.source; presetName = preset.name }
+            error = nil
         } catch { self.error = error.localizedDescription }
     }
 }

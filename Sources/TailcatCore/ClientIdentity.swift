@@ -107,14 +107,16 @@ public enum ClientIdentityRole: String, CaseIterable { case connection, probe }
     public init(identities: (any ClientIdentityProviding)? = nil) { self.identities = identities ?? ClientIdentityStore() }
 
     public func ping(deviceID: UUID, executable: URL, runner: any CommandExecuting,
-                     address: String, seconds: Int) async throws -> CommandResult {
+                     address: String, seconds: Int, relaySource: String? = nil) async throws -> CommandResult {
         while active.contains(deviceID) { try await Task.sleep(nanoseconds: 50_000_000) }
         try Task.checkCancellation()
         active.insert(deviceID)
         defer { active.remove(deviceID) }
         let identity = try await identities.identity(deviceID: deviceID, role: .probe, executable: executable, runner: runner)
         try Task.checkCancellation()
-        return try await runner.run(Command(executable, [identity.argument, "ping", "--timeout=\(seconds)s", address],
+        let relay = try await TailcatRelay.prepare(relaySource)
+        defer { relay.stop() }
+        return try await runner.run(Command(executable, [identity.argument, relay.argument, "ping", "--timeout=\(seconds)s", address],
                                             timeout: TimeInterval(seconds + 3)), onOutput: { _ in })
     }
 }

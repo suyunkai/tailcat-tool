@@ -134,8 +134,16 @@ public enum ToolLocator {
 public struct AppConfiguration: Codable {
     public var profiles: [DeviceProfile]
     public var tools: ToolSettings
-    public init(profiles: [DeviceProfile] = [], tools: ToolSettings = ToolSettings()) {
-        self.profiles = profiles; self.tools = tools
+    public var relayPresets: [RelayPreset]
+    public init(profiles: [DeviceProfile] = [], tools: ToolSettings = ToolSettings(), relayPresets: [RelayPreset] = []) {
+        self.profiles = profiles; self.tools = tools; self.relayPresets = relayPresets
+    }
+    private enum CodingKeys: String, CodingKey { case profiles, tools, relayPresets }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        profiles = try values.decode([DeviceProfile].self, forKey: .profiles)
+        tools = try values.decode(ToolSettings.self, forKey: .tools)
+        relayPresets = try values.decodeIfPresent([RelayPreset].self, forKey: .relayPresets) ?? []
     }
 }
 

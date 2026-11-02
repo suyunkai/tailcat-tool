@@ -22,11 +22,17 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
         let integration = ExternalAndInstallerTests()
         let reachability = ReachabilityTests()
         let identity = IdentityTests()
+        let relay = RelayTests()
         var checks: [(String, @MainActor () async throws -> Void)] = [
             ("credential authorization cache / silent observation / update", { try reachability.testCredentialsReuseAuthorizationAndUpdateCache() }),
             ("batch ping / bounded concurrency / latency / redaction / no ADB", { try await reachability.testAllDevicesBoundedResultsAndNoADBCommands() }),
             ("batch cancellation / queue cleanup / restart", { try await reachability.testCancellationStopsActiveTestsAndQueueBeforeRestart() }),
             ("fixed probe identities / per-device serialization", { try await identity.testProbesSerializeOnlyTheSameSavedIdentity() }),
+            ("explicit custom relay / official default / identity preserved", { try await identity.testCustomRelayIsExplicitAndPreservesTheDeviceIdentity() }),
+            ("relay URL and JSON validation / legacy defaults", { try relay.testInputNormalizationAndLegacyDefaults() }),
+            ("relay presets / per-device isolation / promotion and persistence", { try await relay.testPresetsAndDeviceIsolation() }),
+            ("inline relay JSON / loopback HTTP / HEAD / cleanup", { try await relay.testInlineMapLifecycle() }),
+            ("inline relay map survives automatic port retry", { try await relay.testInlineMapSurvivesAutomaticPortRetry() }),
             ("concurrent sessions / selective disconnect", { try await session.testConcurrentSessionsAndStoppingOnePreservesOther() }),
             ("fixed task target", { try await session.testTasksBindTargetEvenWhenAnotherDeviceConnects() }),
             ("unauthorized transport remains available", { try await session.testUnauthorizedKeepsTunnelAndRejectsDeviceOperations() }),
@@ -54,6 +60,7 @@ func expectThrows<T>(_ expression: @autoclosure () throws -> T, file: String = #
             ("installed path persists / external connection preserved", { try await integration.testInstalledComponentPersistsWhileCLIStaysOnline() })
         ]
         if CommandLine.arguments.contains("--native-tailcat") {
+            checks.append(("installed Tailcat / inline JSON resolve without remote dial", { try await relay.testNativeInlineMapResolve() }))
             checks.append(("installed Tailcat / two listeners / selective cleanup", { try await process.testNativeTailcatListeners() }))
             checks.append(("installed Tailcat / saved identity survives restart / isolated devices and probes", { try await identity.testNativeIdentitySurvivesStoreAndProcessRestarts() }))
             checks.append(("installed Tailcat / invalid identity is preserved / symlinks rejected", { try await identity.testNativeInvalidIdentityIsNeverReplaced() }))

@@ -43,7 +43,8 @@ private final class SpyCredentialStore: CredentialStore {
     func run(_ command: Command, onOutput: @escaping (String) -> Void) async throws -> CommandResult {
         let args = command.arguments; calls.append(args)
         if args.first == "disconnect", args.count > 1 { onDisconnect?(args[1]) }
-        if args.first == "parse" || args.first == "connect" || args.first == "disconnect" { return CommandResult() }
+        if args.first == "parse" { return CommandResult(output: "{\"RegionID\":901}") }
+        if args.first == "connect" || args.first == "disconnect" { return CommandResult() }
         if args.contains("get-state") {
             return unauthorized.contains(args[1]) ? CommandResult(exitCode: 1, output: "error: device unauthorized\n") : CommandResult(output: "device\n")
         }
@@ -65,7 +66,7 @@ private final class SpyCredentialStore: CredentialStore {
         let settings = ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", scrcpy: "/usr/bin/true")
         let manager = SessionManager(configuration: AppConfiguration(profiles: profiles, tools: settings),
                                      credentials: vault, runner: runner, identities: TestingIdentities(), monitorInterval: 60_000_000_000,
-                                     makeTransport: { _, _ in transport })
+                                     makeTransport: { _, _, _ in transport })
         return (manager, runner, transport, profiles)
     }
     func testConcurrentSessionsAndStoppingOnePreservesOther() async throws {
@@ -155,7 +156,7 @@ private final class SpyCredentialStore: CredentialStore {
         let store = ConfigurationStore(directory: root.appendingPathComponent("gui"))
         let settings = ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true", addressBookDirectory: legacy.path)
         let manager = SessionManager(configuration: AppConfiguration(tools: settings), configurationStore: store,
-                                     credentials: vault, runner: runner, identities: TestingIdentities(), makeTransport: { _, _ in transport })
+                                     credentials: vault, runner: runner, identities: TestingIdentities(), makeTransport: { _, _, _ in transport })
         try expectEqual(try manager.importLegacy(), 1)
         let id = manager.profiles[0].id
         let edited = "tc" + String(repeating: "E", count: 30)
@@ -181,7 +182,7 @@ private final class SpyCredentialStore: CredentialStore {
         try store.save(config)
         let before = try Data(contentsOf: root.appendingPathComponent("configuration.json"))
         let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner, identities: TestingIdentities(),
-                                     monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
+                                     monitorInterval: 60_000_000_000, makeTransport: { _, _, _ in transport })
         await manager.connect(saved.id)?.value
         vault.resetCounts()
         let first = try manager.saveTemporaryDevice(address: "tc" + String(repeating: "T", count: 30), preferredPort: 6666)
@@ -198,7 +199,7 @@ private final class SpyCredentialStore: CredentialStore {
         try expectTrue(runner.calls.contains(["-s", "127.0.0.1:6666", "shell", "id"]))
         manager.diagnose(first)
         try await Task.sleep(nanoseconds: 20_000_000)
-        try expectTrue(runner.calls.contains(["--key=/test-identities/\(first.uuidString.lowercased())-probe.private.json", "ping", "--timeout=3s", "tc" + String(repeating: "T", count: 30)]))
+        try expectTrue(runner.calls.contains(["--key=/test-identities/\(first.uuidString.lowercased())-probe.private.json", TailcatRelay.argument, "ping", "--timeout=3s", "tc" + String(repeating: "T", count: 30)]))
         try await manager.removeDevice(first)
         try expectFalse(transport.handles[6666]!.isRunning)
         try expectTrue(transport.handles[6667]!.isRunning)
@@ -225,7 +226,7 @@ private final class SpyCredentialStore: CredentialStore {
         let runner = FakeRunner(), transport = FakeTransport(), vault = SpyCredentialStore(), store = ConfigurationStore(directory: root)
         let config = AppConfiguration(tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true"))
         let manager = SessionManager(configuration: config, configurationStore: store, credentials: vault, runner: runner, identities: TestingIdentities(),
-                                     monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
+                                     monitorInterval: 60_000_000_000, makeTransport: { _, _, _ in transport })
         let address = "tc" + String(repeating: "P", count: 30)
         let id = try manager.saveTemporaryDevice(address: address, preferredPort: 6666)
         await manager.connect(id)?.value
@@ -259,7 +260,7 @@ private final class SpyCredentialStore: CredentialStore {
         let vault = SpyCredentialStore(), runner = FakeRunner(), transport = FakeTransport()
         let manager = SessionManager(configuration: AppConfiguration(tools: ToolSettings(tailcat: "/usr/bin/true", adb: "/usr/bin/true")),
             configurationStore: ConfigurationStore(directory: blocked), credentials: vault, runner: runner, identities: TestingIdentities(),
-            monitorInterval: 60_000_000_000, makeTransport: { _, _ in transport })
+            monitorInterval: 60_000_000_000, makeTransport: { _, _, _ in transport })
         let id = try manager.saveTemporaryDevice(address: "tc" + String(repeating: "F", count: 30), preferredPort: 6666)
         await manager.connect(id)?.value
         try expectThrows(try manager.promoteTemporaryDevice(id, name: "Failed save"))

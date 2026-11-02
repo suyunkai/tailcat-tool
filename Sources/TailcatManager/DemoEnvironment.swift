@@ -24,7 +24,8 @@ import TailcatCore
     func run(_ command: Command, onOutput: @escaping (String) -> Void) async throws -> CommandResult {
         try await Task.sleep(nanoseconds: 100_000_000)
         let args = command.arguments
-        if args.first == "parse" || args.first == "disconnect" { return CommandResult() }
+        if args.first == "parse" { return CommandResult(output: "{\"RegionID\":302}") }
+        if args.first == "disconnect" { return CommandResult() }
         if args.first == "connect" { return CommandResult(output: "示例 ADB 通道已建立\n") }
         if args.contains("get-state") {
             return args.contains("127.0.0.1:5557") ? CommandResult(exitCode: 1, output: "error: device unauthorized\n") : CommandResult(output: "device\n")
@@ -32,7 +33,7 @@ import TailcatCore
         if args.contains(where: { $0.contains("getprop ro.product.model") }) {
             return CommandResult(output: "E245（示例）\nantora-demo\n11\nDEMO-ONLY\nuid=0(root) gid=0(root)\n")
         }
-        if args.count > 1, args[1] == "ping" { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
+        if args.contains("ping") { return CommandResult(output: "pong in 18ms via DERP(example)\n") }
         onOutput("示例任务正在执行，目标 \(args.dropFirst().first ?? "")\n")
         try await Task.sleep(nanoseconds: 1_500_000_000)
         return CommandResult(output: "示例任务完成，未执行真实设备命令。\n")
@@ -59,7 +60,7 @@ import TailcatCore
         let manager = SessionManager(configuration: AppConfiguration(profiles: profiles, tools: settings),
                                      credentials: vault, runner: DemoRunner(), identities: DemoIdentities(),
                                      allowsComponentInstallation: false,
-                                     makeTransport: { _, _ in transport })
+                                     makeTransport: { _, _, _ in transport })
         manager.connect(profiles[0].id); manager.connect(profiles[1].id)
         return manager
     }

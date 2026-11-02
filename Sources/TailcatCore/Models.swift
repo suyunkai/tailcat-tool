@@ -6,14 +6,16 @@ public struct DeviceProfile: Identifiable, Codable, Equatable {
     public var legacyUsername: String?
     public var preferredPort: Int?
     public var remotePort: Int
+    public var relaySource: String?
 
     public init(id: UUID = UUID(), name: String, legacyUsername: String? = nil,
-                preferredPort: Int? = nil, remotePort: Int = 5555) {
+                preferredPort: Int? = nil, remotePort: Int = 5555, relaySource: String? = nil) {
         self.id = id
         self.name = name
         self.legacyUsername = legacyUsername
         self.preferredPort = preferredPort
         self.remotePort = remotePort
+        self.relaySource = relaySource
     }
 }
 

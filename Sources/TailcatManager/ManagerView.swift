@@ -317,6 +317,7 @@ private struct DeviceDetailView: View {
                         VStack(spacing: 13) {
                             DetailRow("本地入口", session.serial ?? "未分配")
                             DetailRow("远端端口", String(session.isExternalCLI ? manager.externalSessions[profile.id]?.first(where: { $0.serial == session.serial })?.remotePort ?? profile.remotePort : profile.remotePort))
+                            DetailRow("DERP 中继", session.isExternalCLI ? "由 CLI 配置" : profile.relaySource == nil ? "官方默认节点" : manager.relayPresets.first(where: { $0.source == profile.relaySource })?.name ?? "自定义 JSON 链接或内容")
                             DetailRow("链路", session.route)
                             DetailRow("设备型号", session.model)
                             DetailRow("设备代号", session.product)
